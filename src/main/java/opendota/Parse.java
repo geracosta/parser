@@ -829,6 +829,17 @@ public class Parse {
                             posEntry.y = getPreciseLocation(cy, vy);
                             posEntry.ftime = ftime;
                             posEntry.life_state = getEntityProperty(heroEntity, "m_lifeState", null);
+                            // Orientacion real de la unidad (QAngle: [pitch, yaw, roll]).
+                            // Clarity puede devolver float[] o Vector segun version.
+                            try {
+                                Object rot = getEntityProperty(heroEntity, "CBodyComponent.m_angRotation", null);
+                                if (rot instanceof float[] fa && fa.length > 1) {
+                                    posEntry.yaw = fa[1];
+                                } else if (rot instanceof skadistats.clarity.model.Vector v) {
+                                    posEntry.yaw = v.getElement(1);
+                                }
+                            } catch (Exception ignored) {
+                            }
                             output(posEntry);
                         }
                     }
