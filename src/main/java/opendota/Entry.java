@@ -12,6 +12,7 @@ public class Entry implements Cloneable {
     public Float floatValue;
     public Boolean booleanValue;
     public Integer slot;
+    public Float ftime;
     public Integer player_slot;
     // chat event fields
     public Integer player1;

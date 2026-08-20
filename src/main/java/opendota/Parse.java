@@ -69,6 +69,11 @@ public class Parse {
 
     float INTERVAL = 1;
     float nextInterval = 0;
+    // High-frequency position sampling (local patch para el 3D replay viewer):
+    // emite entries "pos" con tiempo fraccional para movimiento fluido
+    float POS_INTERVAL = 0.2f;
+    float nextPosInterval = 0;
+    float ftime = 0;
     Integer time = 0;
     int numPlayers = 10;
     int[] validIndices = new int[numPlayers];
@@ -136,6 +141,9 @@ public class Parse {
             logBuffer.add(e);
         } else {
             e.time -= gameStartTime;
+            if (e.ftime != null) {
+                e.ftime -= gameStartTime;
+            }
             finalList.add(e);
             // TODO if we don't want to buffer the entire log in memory and aren't assembling blob we can write to output directly here
             // os.write((g.toJson(e) + "\n").getBytes());
@@ -335,6 +343,7 @@ public class Parse {
             time = Math.round(cle.getTimestamp());
             // create a new entry
             Entry combatLogEntry = new Entry(time);
+            combatLogEntry.ftime = cle.getTimestamp();
             combatLogEntry.type = cle.getType().name();
             // translate the fields using string tables if necessary (get*Name methods)
             combatLogEntry.attackername = cle.getAttackerName();
@@ -474,6 +483,7 @@ public class Parse {
                 boolean isPaused = getEntityProperty(grp, "m_pGameRules.m_bGamePaused", null);
                 int timeTick = isPaused ? getEntityProperty(grp, "m_pGameRules.m_nPauseStartTick", null) : serverTick;
                 int pausedTicks = getEntityProperty(grp, "m_pGameRules.m_nTotalPausedTicks", null);
+                ftime = (float) (timeTick - pausedTicks) / 30;
                 time = Math.round((float) (timeTick - pausedTicks) / 30);
 
                 // Tracking game pauses
@@ -496,6 +506,7 @@ public class Parse {
                 }
 
             } else {
+                ftime = oldTime;
                 time = Math.round(oldTime);
             }
             // alternate to combat log for getting game zero time (looks like this is set at
@@ -579,6 +590,9 @@ public class Parse {
             // initialize nextInterval value
             if (nextInterval == 0) {
                 nextInterval = time;
+            }
+            if (nextPosInterval == 0) {
+                nextPosInterval = ftime;
             }
         }
         if (pr != null) {
@@ -794,6 +808,34 @@ public class Parse {
                     output(entry);
                 }
                 nextInterval += INTERVAL;
+            }
+
+            // Posiciones a alta frecuencia (POS_INTERVAL) con tiempo fraccional
+            // y life_state — entries livianos tipo "pos" para el replay viewer
+            if (init && !postGame && ftime >= nextPosInterval) {
+                for (int i = 0; i < numPlayers; i++) {
+                    int handle = getEntityProperty(pr, "m_vecPlayerTeamData.%i.m_hSelectedHero", validIndices[i]);
+                    Entity heroEntity = ctx.getProcessor(Entities.class).getByHandle(handle);
+                    if (heroEntity != null) {
+                        Integer cx = getEntityProperty(heroEntity, "CBodyComponent.m_cellX", null);
+                        Integer cy = getEntityProperty(heroEntity, "CBodyComponent.m_cellY", null);
+                        Float vx = getEntityProperty(heroEntity, "CBodyComponent.m_vecX", null);
+                        Float vy = getEntityProperty(heroEntity, "CBodyComponent.m_vecY", null);
+                        if (cx != null && cy != null) {
+                            Entry posEntry = new Entry(time);
+                            posEntry.type = "pos";
+                            posEntry.slot = i;
+                            posEntry.x = getPreciseLocation(cx, vx);
+                            posEntry.y = getPreciseLocation(cy, vy);
+                            posEntry.ftime = ftime;
+                            posEntry.life_state = getEntityProperty(heroEntity, "m_lifeState", null);
+                            output(posEntry);
+                        }
+                    }
+                }
+                while (nextPosInterval <= ftime) {
+                    nextPosInterval += POS_INTERVAL;
+                }
             }
 
             // When the game is over, get dota plus levels
