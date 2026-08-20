@@ -14,6 +14,8 @@ public class Entry implements Cloneable {
     public Integer slot;
     public Float ftime;
     public Float yaw;
+    public Integer hp;
+    public Integer maxhp;
     public Integer player_slot;
     // chat event fields
     public Integer player1;

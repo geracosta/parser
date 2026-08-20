@@ -74,6 +74,41 @@ public class Parse {
     float POS_INTERVAL = 0.2f;
     float nextPosInterval = 0;
     float ftime = 0;
+    // Muestreo de unidades no-héroe (creeps, torres, wards, Roshan, couriers):
+    // estado por handle para emitir solo CAMBIOS (los edificios salen casi gratis)
+    private static class UnitState {
+        float x, y, yaw; int hp; int life;
+    }
+    private final HashMap<Integer, UnitState> unitStates = new HashMap<>();
+    private static final Set<String> UNIT_DT_NAMES = new HashSet<>(Arrays.asList(
+        "CDOTA_BaseNPC_Creep_Lane",
+        "CDOTA_BaseNPC_Creep_Siege",
+        "CDOTA_BaseNPC_Creep_Neutral",
+        "CDOTA_BaseNPC_Tower",
+        "CDOTA_BaseNPC_Barracks",
+        "CDOTA_BaseNPC_Fort",
+        "CDOTA_BaseNPC_Building",
+        "CDOTA_BaseNPC_Watch_Tower",
+        "CDOTA_NPC_Observer_Ward",
+        "CDOTA_NPC_Observer_Ward_TrueSight",
+        "CDOTA_Unit_Roshan",
+        "CDOTA_Unit_Courier"
+    ));
+
+    private String getEntityName(Context ctx, Entity e) {
+        try {
+            Integer idx = getEntityProperty(e, "m_pEntity.m_nameStringableIndex", null);
+            if (idx != null && idx >= 0) {
+                StringTable st = ctx.getProcessor(StringTables.class).forName("EntityNames");
+                if (st != null) {
+                    String n = st.getNameByIndex(idx);
+                    if (n != null && !n.isEmpty()) return n;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return e.getDtClass().getDtName();
+    }
     Integer time = 0;
     int numPlayers = 10;
     int[] validIndices = new int[numPlayers];
@@ -844,6 +879,89 @@ public class Parse {
                         }
                     }
                 }
+                // --- Unidades no-héroe: entry "unit" al primer avistaje,
+                // "u" en cada cambio (pos/yaw/hp/vida), "u_gone" al borrarse ---
+                try {
+                    HashSet<Integer> seen = new HashSet<>();
+                    Iterator<Entity> it = ctx.getProcessor(Entities.class).getAllByPredicate(
+                            u -> UNIT_DT_NAMES.contains(u.getDtClass().getDtName()));
+                    while (it.hasNext()) {
+                        Entity u = it.next();
+                        Integer cx = getEntityProperty(u, "CBodyComponent.m_cellX", null);
+                        Integer cy = getEntityProperty(u, "CBodyComponent.m_cellY", null);
+                        if (cx == null || cy == null) continue;
+                        Float vx = getEntityProperty(u, "CBodyComponent.m_vecX", null);
+                        Float vy = getEntityProperty(u, "CBodyComponent.m_vecY", null);
+                        float ux = getPreciseLocation(cx, vx);
+                        float uy = getPreciseLocation(cy, vy);
+                        Integer hpI = getEntityProperty(u, "m_iHealth", null);
+                        Integer lifeI = getEntityProperty(u, "m_lifeState", null);
+                        int hp = hpI == null ? 0 : hpI;
+                        int life = lifeI == null ? 0 : lifeI;
+                        float uyaw = 0;
+                        try {
+                            Object rot = getEntityProperty(u, "CBodyComponent.m_angRotation", null);
+                            if (rot instanceof float[] fa && fa.length > 1) {
+                                uyaw = fa[1];
+                            } else if (rot instanceof skadistats.clarity.model.Vector v) {
+                                uyaw = v.getElement(1);
+                            }
+                        } catch (Exception ignored) {
+                        }
+                        int handle = u.getHandle();
+                        seen.add(handle);
+                        UnitState prev = unitStates.get(handle);
+                        if (prev == null) {
+                            Entry ue = new Entry(time);
+                            ue.type = "unit";
+                            ue.ehandle = handle;
+                            ue.key = getEntityName(ctx, u);
+                            ue.unit = u.getDtClass().getDtName();
+                            ue.team = getEntityProperty(u, "m_iTeamNum", null);
+                            ue.maxhp = getEntityProperty(u, "m_iMaxHealth", null);
+                            ue.ftime = ftime;
+                            output(ue);
+                            prev = new UnitState();
+                            prev.x = Float.MIN_VALUE;
+                            unitStates.put(handle, prev);
+                        }
+                        boolean moved = Math.abs(ux - prev.x) > 0.05f || Math.abs(uy - prev.y) > 0.05f
+                                || Math.abs(uyaw - prev.yaw) > 15f;
+                        boolean changed = hp != prev.hp || life != prev.life;
+                        if (moved || changed) {
+                            Entry pe = new Entry(time);
+                            pe.type = "u";
+                            pe.ehandle = handle;
+                            pe.ftime = ftime;
+                            pe.x = ux;
+                            pe.y = uy;
+                            pe.yaw = uyaw;
+                            pe.hp = hp;
+                            pe.life_state = life;
+                            output(pe);
+                            prev.x = ux;
+                            prev.y = uy;
+                            prev.yaw = uyaw;
+                            prev.hp = hp;
+                            prev.life = life;
+                        }
+                    }
+                    Iterator<Map.Entry<Integer, UnitState>> sit = unitStates.entrySet().iterator();
+                    while (sit.hasNext()) {
+                        Integer h = sit.next().getKey();
+                        if (!seen.contains(h)) {
+                            Entry ge = new Entry(time);
+                            ge.type = "u_gone";
+                            ge.ehandle = h;
+                            ge.ftime = ftime;
+                            output(ge);
+                            sit.remove();
+                        }
+                    }
+                } catch (Exception unitErr) {
+                    // no romper el parseo por una unidad rara
+                }
+
                 while (nextPosInterval <= ftime) {
                     nextPosInterval += POS_INTERVAL;
                 }
