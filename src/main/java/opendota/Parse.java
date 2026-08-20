@@ -864,6 +864,8 @@ public class Parse {
                             posEntry.y = getPreciseLocation(cy, vy);
                             posEntry.ftime = ftime;
                             posEntry.life_state = getEntityProperty(heroEntity, "m_lifeState", null);
+                            posEntry.hp = getEntityProperty(heroEntity, "m_iHealth", null);
+                            posEntry.maxhp = getEntityProperty(heroEntity, "m_iMaxHealth", null);
                             // Orientacion real de la unidad (QAngle: [pitch, yaw, roll]).
                             // Clarity puede devolver float[] o Vector segun version.
                             try {
