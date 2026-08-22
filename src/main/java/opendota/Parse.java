@@ -30,6 +30,9 @@ import skadistats.clarity.wire.dota.common.proto.DOTACombatLog.DOTA_COMBATLOG_TY
 import skadistats.clarity.wire.dota.s2.proto.DOTAS2GcMessagesCommon.CMsgDOTAMatch;
 import skadistats.clarity.wire.shared.s1.proto.S1UserMessages.CUserMsg_SayText2;
 import skadistats.clarity.wire.shared.s2.proto.S2UserMessages.CUserMessageSayText2;
+import skadistats.clarity.wire.shared.demo.proto.DemoUserMessages.CUserMsg_ParticleManager;
+import skadistats.clarity.wire.dota.common.proto.DOTAUserMessages.CDOTAUserMsg_TE_Projectile;
+import skadistats.clarity.wire.dota.common.proto.DOTAUserMessages.CDOTAUserMsg_TE_ProjectileLoc;
 
 import java.util.*;
 import java.io.IOException;
@@ -74,6 +77,9 @@ public class Parse {
     float POS_INTERVAL = 0.2f;
     float nextPosInterval = 0;
     float ftime = 0;
+    // handle de heroe -> slot (para adjuntar particulas a heroes en el viewer)
+    private final HashMap<Integer, Integer> heroHandleToSlot = new HashMap<>();
+    private boolean particleTableWarned = false;
     // Muestreo de unidades no-héroe (creeps, torres, wards, Roshan, couriers):
     // estado por handle para emitir solo CAMBIOS (los edificios salen casi gratis)
     private static class UnitState {
@@ -471,9 +477,198 @@ public class Parse {
         }
     }
 
+
+    // --- Proyectiles reales (TE_Projectile / TE_ProjectileLoc) ---
+    // Los ataques a distancia NO van por ParticleManager: llegan aca con
+    // fuente, objetivo, velocidad y el hash del vpcf del proyectil.
+    private void fillProjectileEnds(Context ctx, Entry e, int hSource, int hTarget) {
+        Entity src = ctx.getProcessor(Entities.class).getByHandle(hSource);
+        if (src != null) {
+            e.ehandle = hSource;
+            e.unit = src.getDtClass().getDtName();
+            e.slot = heroHandleToSlot.get(hSource);
+            Integer cx = getEntityProperty(src, "CBodyComponent.m_cellX", null);
+            Integer cy = getEntityProperty(src, "CBodyComponent.m_cellY", null);
+            if (cx != null && cy != null) {
+                Float vx = getEntityProperty(src, "CBodyComponent.m_vecX", null);
+                Float vy = getEntityProperty(src, "CBodyComponent.m_vecY", null);
+                e.x = getPreciseLocation(cx, vx);
+                e.y = getPreciseLocation(cy, vy);
+            }
+        }
+        Entity tgt = ctx.getProcessor(Entities.class).getByHandle(hTarget);
+        if (tgt != null) {
+            e.ehandle2 = hTarget;
+            e.unit2 = tgt.getDtClass().getDtName();
+            e.slot2 = heroHandleToSlot.get(hTarget);
+        }
+    }
+
+    @UsesEntities
+    @OnMessage(CDOTAUserMsg_TE_Projectile.class)
+    public void onTEProjectile(Context ctx, CDOTAUserMsg_TE_Projectile m) {
+        if (postGame) {
+            return;
+        }
+        Entry e = new Entry(time);
+        e.type = "proj";
+        e.ftime = ftime;
+        e.phash = m.getParticleSystemHandle();
+        e.value = m.getMoveSpeed();
+        e.booleanValue = m.getIsAttack();
+        fillProjectileEnds(ctx, e, m.getSource(), m.hasTarget() ? m.getTarget() : 0);
+        output(e);
+    }
+
+    @UsesEntities
+    @OnMessage(CDOTAUserMsg_TE_ProjectileLoc.class)
+    public void onTEProjectileLoc(Context ctx, CDOTAUserMsg_TE_ProjectileLoc m) {
+        if (postGame) {
+            return;
+        }
+        Entry e = new Entry(time);
+        e.type = "projloc";
+        e.ftime = ftime;
+        e.phash = m.getParticleSystemHandle();
+        e.value = m.getMoveSpeed();
+        e.booleanValue = m.getIsAttack();
+        fillProjectileEnds(ctx, e, m.getSource(), m.hasTarget() ? m.getTarget() : 0);
+        if (e.x == null && m.hasSourceLoc()) {
+            e.x = m.getSourceLoc().getX() / 128f + 128f;
+            e.y = m.getSourceLoc().getY() / 128f + 128f;
+        }
+        if (m.hasTargetLoc()) {
+            e.z = m.getTargetLoc().getX() / 128f + 128f;   // targetLoc en z/floatValue
+            e.floatValue = m.getTargetLoc().getY() / 128f + 128f;
+        }
+        output(e);
+    }
+
     @OnMessage(CNETMsg_Tick.class)
     public void onMessage(CNETMsg_Tick message) {
         serverTick = message.getTick();
+    }
+
+    // --- Particulas (replay viewer): create/update/destroy con nombre real ---
+    // Posiciones SIEMPRE en celdas del parser (mundo/128+128); z en unidades
+    // de mundo. CREATE trae nombre del stringtable ParticleEffectNames +
+    // entidad adjunta (slot si es heroe); updates traen control points.
+    @UsesStringTable("ParticleAssets")
+    @UsesEntities
+    @OnMessage(CUserMsg_ParticleManager.class)
+    public void onParticleManager(Context ctx, CUserMsg_ParticleManager message) {
+        if (postGame) {
+            return;
+        }
+        Entry e = new Entry(time);
+        e.type = "part";
+        e.particle = message.getIndex();
+        e.ftime = ftime;
+        if (message.hasCreateParticle()) {
+            CUserMsg_ParticleManager.CreateParticle cp = message.getCreateParticle();
+            e.valuename = "c";
+            try {
+                StringTable st = ctx.getProcessor(StringTables.class).forName("ParticleAssets");
+                if (st == null) {
+                    st = ctx.getProcessor(StringTables.class).forName("ParticleEffectNames");
+                }
+                if (st == null) {
+                    if (!particleTableWarned) {
+                        particleTableWarned = true;
+                        System.err.println("[particles] no hay stringtable de particulas (ParticleAssets)");
+                    }
+                } else {
+                    e.key = st.getNameByIndex((int) cp.getParticleNameIndex());
+                }
+            } catch (Exception ex) {
+                if (!particleTableWarned) {
+                    particleTableWarned = true;
+                    System.err.println("[particles] error stringtable: " + ex);
+                }
+            }
+            if (e.key == null) {
+                // Demos modernos: particleNameIndex es el resource ID de 64
+                // bits del vpcf (MurmurHash64B seed 0xEDABCDEF del path en
+                // minusculas) — el extractor lo resuelve contra el vpk
+                e.phash = cp.getParticleNameIndex();
+            }
+            e.value = cp.getAttachType();
+            int handle = cp.getEntityHandle();
+            if (handle != 0) {
+                Entity ent = ctx.getProcessor(Entities.class).getByHandle(handle);
+                if (ent != null) {
+                    e.ehandle = handle;
+                    e.unit = ent.getDtClass().getDtName();
+                    e.slot = heroHandleToSlot.get(handle);
+                    Integer cx = getEntityProperty(ent, "CBodyComponent.m_cellX", null);
+                    Integer cy = getEntityProperty(ent, "CBodyComponent.m_cellY", null);
+                    if (cx != null && cy != null) {
+                        Float vx = getEntityProperty(ent, "CBodyComponent.m_vecX", null);
+                        Float vy = getEntityProperty(ent, "CBodyComponent.m_vecY", null);
+                        e.x = getPreciseLocation(cx, vx);
+                        e.y = getPreciseLocation(cy, vy);
+                    }
+                }
+            }
+        } else if (message.hasUpdateParticleFallback()) {
+            CUserMsg_ParticleManager.UpdateParticleFallback up = message.getUpdateParticleFallback();
+            e.valuename = "u";
+            e.cp = up.getControlPoint();
+            float wx = up.getPosition().getX(), wy = up.getPosition().getY(), wz = up.getPosition().getZ();
+            if (wx == 0 && wy == 0 && wz == 0) {
+                return;
+            }
+            e.x = wx / 128f + 128f;
+            e.y = wy / 128f + 128f;
+            e.z = wz;
+        } else if (message.hasUpdateParticleTransform()) {
+            CUserMsg_ParticleManager.UpdateParticleTransform ut = message.getUpdateParticleTransform();
+            e.valuename = "u";
+            e.cp = ut.getControlPoint();
+            float wx = ut.getPosition().getX(), wy = ut.getPosition().getY(), wz = ut.getPosition().getZ();
+            if (wx == 0 && wy == 0 && wz == 0) {
+                return;
+            }
+            e.x = wx / 128f + 128f;
+            e.y = wy / 128f + 128f;
+            e.z = wz;
+        } else if (message.hasUpdateParticleEnt()) {
+            CUserMsg_ParticleManager.UpdateParticleEnt ue = message.getUpdateParticleEnt();
+            e.valuename = "e";
+            e.cp = ue.getControlPoint();
+            int h = ue.getEntityHandle();
+            if (h != 0) {
+                Entity ent = ctx.getProcessor(Entities.class).getByHandle(h);
+                if (ent != null) {
+                    e.ehandle = h;
+                    e.unit = ent.getDtClass().getDtName();
+                    e.slot = heroHandleToSlot.get(h);
+                    Integer cx = getEntityProperty(ent, "CBodyComponent.m_cellX", null);
+                    Integer cy = getEntityProperty(ent, "CBodyComponent.m_cellY", null);
+                    if (cx != null && cy != null) {
+                        Float vx = getEntityProperty(ent, "CBodyComponent.m_vecX", null);
+                        Float vy = getEntityProperty(ent, "CBodyComponent.m_vecY", null);
+                        e.x = getPreciseLocation(cx, vx);
+                        e.y = getPreciseLocation(cy, vy);
+                    }
+                }
+            }
+            if (e.x == null) {
+                float wx = ue.getFallbackPosition().getX(), wy = ue.getFallbackPosition().getY();
+                if (wx != 0 || wy != 0) {
+                    e.x = wx / 128f + 128f;
+                    e.y = wy / 128f + 128f;
+                    e.z = ue.getFallbackPosition().getZ();
+                }
+            }
+        } else if (message.hasDestroyParticle()) {
+            e.valuename = "d";
+        } else if (message.hasReleaseParticleIndex()) {
+            e.valuename = "r";
+        } else {
+            return;
+        }
+        output(e);
     }
 
     @UsesStringTable("EntityNames")
@@ -851,6 +1046,7 @@ public class Parse {
                 for (int i = 0; i < numPlayers; i++) {
                     int handle = getEntityProperty(pr, "m_vecPlayerTeamData.%i.m_hSelectedHero", validIndices[i]);
                     Entity heroEntity = ctx.getProcessor(Entities.class).getByHandle(handle);
+                    heroHandleToSlot.put(handle, i);
                     if (heroEntity != null) {
                         Integer cx = getEntityProperty(heroEntity, "CBodyComponent.m_cellX", null);
                         Integer cy = getEntityProperty(heroEntity, "CBodyComponent.m_cellY", null);

@@ -59,6 +59,14 @@ public class Entry implements Cloneable {
     public Integer denies;
     public Boolean entityleft;
     public Integer ehandle;
+    // particle entries (replay viewer): id de instancia y control point
+    public Integer particle;
+    public Integer cp;
+    public Long phash;
+    // proyectiles (TE_Projectile): objetivo
+    public Integer ehandle2;
+    public Integer slot2;
+    public String unit2;
     public Boolean isNeutralActiveDrop;
     public Boolean isNeutralPassiveDrop;
     public Integer obs_placed;
