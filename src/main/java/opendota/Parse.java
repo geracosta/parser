@@ -33,6 +33,7 @@ import skadistats.clarity.wire.shared.s2.proto.S2UserMessages.CUserMessageSayTex
 import skadistats.clarity.wire.shared.demo.proto.DemoUserMessages.CUserMsg_ParticleManager;
 import skadistats.clarity.wire.dota.common.proto.DOTAUserMessages.CDOTAUserMsg_TE_Projectile;
 import skadistats.clarity.wire.dota.common.proto.DOTAUserMessages.CDOTAUserMsg_TE_ProjectileLoc;
+import skadistats.clarity.wire.dota.common.proto.DOTAUserMessages.CDOTAUserMsg_CreateLinearProjectile;
 
 import java.util.*;
 import java.io.IOException;
@@ -502,6 +503,36 @@ public class Parse {
             e.unit2 = tgt.getDtClass().getDtName();
             e.slot2 = heroHandleToSlot.get(hTarget);
         }
+    }
+
+    // Proyectiles LINEALES (skillshots: powershot, waves...): origen +
+    // velocidad + distancia + vpcf. No pasan por ParticleManager ni TE_*.
+    @UsesEntities
+    @OnMessage(CDOTAUserMsg_CreateLinearProjectile.class)
+    public void onLinearProjectile(Context ctx, CDOTAUserMsg_CreateLinearProjectile m) {
+        if (postGame) {
+            return;
+        }
+        Entry e = new Entry(time);
+        e.type = "linproj";
+        e.ftime = ftime;
+        e.phash = m.getParticleIndex();
+        e.x = m.getOrigin().getX() / 128f + 128f;
+        e.y = m.getOrigin().getY() / 128f + 128f;
+        // direccion y magnitud de la velocidad (world units/s)
+        float vx = m.getVelocity().getX(), vy = m.getVelocity().getY();
+        e.yaw = (float) Math.toDegrees(Math.atan2(vy, vx));
+        e.value = (int) Math.sqrt(vx * vx + vy * vy);
+        e.floatValue = m.getDistance();
+        try {
+            Entity own = ctx.getProcessor(Entities.class).getByIndex(m.getEntindex());
+            if (own != null) {
+                e.unit = own.getDtClass().getDtName();
+                e.slot = heroHandleToSlot.get(own.getHandle());
+            }
+        } catch (Exception ignored) {
+        }
+        output(e);
     }
 
     @UsesEntities
