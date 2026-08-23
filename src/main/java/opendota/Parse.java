@@ -99,7 +99,9 @@ public class Parse {
         "CDOTA_NPC_Observer_Ward",
         "CDOTA_NPC_Observer_Ward_TrueSight",
         "CDOTA_Unit_Roshan",
-        "CDOTA_Unit_Courier"
+        "CDOTA_Unit_Courier",
+        // runas: entidades que nacen al aparecer y mueren al consumirse
+        "CDOTA_Item_Rune"
     ));
 
     private String getEntityName(Context ctx, Entity e) {
