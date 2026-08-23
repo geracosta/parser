@@ -80,6 +80,7 @@ public class Parse {
     float ftime = 0;
     // handle de heroe -> slot (para adjuntar particulas a heroes en el viewer)
     private final HashMap<Integer, Integer> heroHandleToSlot = new HashMap<>();
+    private final HashMap<Integer, Long> heroModel = new HashMap<>();
     private boolean particleTableWarned = false;
     // Muestreo de unidades no-héroe (creeps, torres, wards, Roshan, couriers):
     // estado por handle para emitir solo CAMBIOS (los edificios salen casi gratis)
@@ -101,7 +102,13 @@ public class Parse {
         "CDOTA_Unit_Roshan",
         "CDOTA_Unit_Courier",
         // runas: entidades que nacen al aparecer y mueren al consumirse
-        "CDOTA_Item_Rune"
+        "CDOTA_Item_Rune",
+        // INVOCACIONES (tumba de Undying, zombies, wards de WD, espiritus...):
+        // usan la clase base generica y se distinguen por su modelo
+        "CDOTA_BaseNPC",
+        "CDOTA_BaseNPC_Additive",
+        "CDOTA_PhantomAssassin_Gravestone",
+        "CDOTA_TempTree"
     ));
 
     private String getEntityName(Context ctx, Entity e) {
@@ -1095,6 +1102,19 @@ public class Parse {
                             posEntry.life_state = getEntityProperty(heroEntity, "m_lifeState", null);
                             posEntry.hp = getEntityProperty(heroEntity, "m_iHealth", null);
                             posEntry.maxhp = getEntityProperty(heroEntity, "m_iMaxHealth", null);
+                            // El modelo del heroe CAMBIA al transformarse
+                            // (Dragon Knight en dragon, Lycan en lobo...):
+                            // se emite solo cuando cambia, no en cada muestra
+                            try {
+                                Object mh = getEntityProperty(heroEntity, "CBodyComponent.m_hModel", null);
+                                Long mv = (mh instanceof Long lv) ? lv
+                                        : (mh instanceof Integer iv ? iv.longValue() : null);
+                                if (mv != null && !mv.equals(heroModel.get(i))) {
+                                    heroModel.put(i, mv);
+                                    posEntry.phash = mv;
+                                }
+                            } catch (Exception ignored) {
+                            }
                             // Orientacion real de la unidad (QAngle: [pitch, yaw, roll]).
                             // Clarity puede devolver float[] o Vector segun version.
                             try {
