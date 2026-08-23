@@ -1149,6 +1149,18 @@ public class Parse {
                             ue.team = getEntityProperty(u, "m_iTeamNum", null);
                             ue.maxhp = getEntityProperty(u, "m_iMaxHealth", null);
                             ue.ftime = ftime;
+                            // resource ID del MODELO (64 bits): permite saber
+                            // exactamente que unidad es. El nombre no viaja
+                            // (EntityNames no tiene a los neutrales).
+                            try {
+                                Object mh = getEntityProperty(u, "CBodyComponent.m_hModel", null);
+                                if (mh instanceof Long lv) {
+                                    ue.phash = lv;
+                                } else if (mh instanceof Integer iv) {
+                                    ue.phash = iv.longValue();
+                                }
+                            } catch (Exception ignored) {
+                            }
                             output(ue);
                             prev = new UnitState();
                             prev.x = Float.MIN_VALUE;
